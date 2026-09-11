@@ -9,16 +9,16 @@ load_dotenv()
     
 # 接入模型（兼容OpenAI接口）
 model = ChatOpenAI(
-    model=os.getenv("SILICONFLOW_MODEL_NAME", "Qwen/Qwen2.5-7B-Instruct"),
-    api_key=os.getenv("SILICONFLOW_API_KEY"),
-    base_url=os.getenv("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1"),
+    model=os.getenv("OPENAI_MODEL_NAME"),
+    api_key=os.getenv("OPENAI_API_KEY"),
+    base_url=os.getenv("OPENAI_BASE_URL"),
 )
 
 # 使用Google内置搜索（无需额外安装）
-internet_search = {"google_search": {}}
+#internet_search = {"google_search": {}}
 
-# 或使用OpenAI内置搜索
-#internet_search = {"type": "web_search"}
+# 使用OpenAI内置搜索
+internet_search = {"type": "web_search"}
 
 # 创建研究助手
 agent = create_deep_agent(
