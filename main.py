@@ -14,7 +14,7 @@ def main():
         # 只显示前后几位，避免泄露完整密钥
         print(f"已加载 API Key: {api_key[:6]}...{api_key[-4:]}")
     else:
-        print("未找到 OPENAI_API_KEY，请检查 .env 文件")
+        print("未找到 API_KEY，请检查 .env 文件")
 
     print(f"Base URL: {base_url}")
 
