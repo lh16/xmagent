@@ -30,6 +30,8 @@ class Settings:
     RERANKER_MODEL: str = os.getenv("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
     RETRIEVE_TOP_K: int = int(os.getenv("RETRIEVE_TOP_K", "10"))
     RERANK_TOP_K: int = int(os.getenv("RERANK_TOP_K", "3"))
+    CHUNK_SIZE: int = int(os.getenv("CHUNK_SIZE", "500"))
+    CHUNK_OVERLAP: int = int(os.getenv("CHUNK_OVERLAP", "50"))
 
     # ===== 存储 =====
     CHROMA_PERSIST_DIR: str = os.getenv("CHROMA_PERSIST_DIR", "./data/chroma_db")
