@@ -31,7 +31,7 @@ def main():
 
     agent = create_deep_agent(
         model=model,
-        tools=[internet_search],
+        tools=[],
         system_prompt="你是一个研究专家。对于复杂任务，先制定计划再执行。",
     )
 
