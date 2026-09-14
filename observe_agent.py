@@ -1,3 +1,4 @@
+# observe_agent.py
 import os
 
 from dotenv import load_dotenv
@@ -12,7 +13,6 @@ def main():
     load_dotenv()
 
     # 初始化 Tavily 客户端
-    # 我们可以先去 https://tavily.com/ 注册一个账号，然后在 https://tavily.com/account/api-keys 创建一个 API key，免费的额度支持个人学习基本够用
     tavily_client = TavilyClient(api_key=os.environ["TAVILY_API_KEY"])
 
     # 定义搜索工具
@@ -29,18 +29,28 @@ def main():
         base_url=os.getenv("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1"),
     )
 
-    # 创建 Agent
     agent = create_deep_agent(
         model=model,
         tools=[internet_search],
-        system_prompt="进行研究并撰写一份完整的报告。",
+        system_prompt="你是一个研究专家。对于复杂任务，先制定计划再执行。",
     )
 
-    # 运行
     result = agent.invoke({
-        "messages": [{"role": "user", "content": "什么是Deep Agents？"}]
+        "messages": [{
+            "role": "user",
+            "content": """
+            请完成以下任务：
+            1. 搜索2026年AI Agent框架的最新对比
+            2. 分析LangGraph和CrewAI的优劣
+            3. 给出选型建议
+            """
+        }]
     })
-    print(result["messages"][-1].content)
+
+    # 查看 Agent 的完整思考过程
+    messages = result["messages"]
+    for msg in messages:
+        print(f"[{msg.type}]: {msg.content[:200]}...")
 
 
 if __name__ == "__main__":
