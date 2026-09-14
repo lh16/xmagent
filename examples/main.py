@@ -1,11 +1,15 @@
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
+
+# 项目根目录下的 .env（本文件在 examples/ 里，所以往上两级）
+ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
 
 
 def main():
     # 从 .env 文件加载环境变量（不会覆盖已存在的系统环境变量）
-    load_dotenv()
+    load_dotenv(ENV_PATH)
 
     api_key = os.getenv("OPENAI_API_KEY")
     base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
