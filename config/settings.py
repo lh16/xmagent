@@ -34,6 +34,9 @@ class Settings:
 
     EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "BAAI/bge-small-zh-v1.5")
     RERANKER_MODEL: str = os.getenv("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
+
+    # 云端重排序模型（SiliconFlow /v1/rerank，兼容 Cohere 接口）
+    SILICONFLOW_RERANKER_MODEL: str = os.getenv("SILICONFLOW_RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
     RETRIEVE_TOP_K: int = int(os.getenv("RETRIEVE_TOP_K", "10"))
     RERANK_TOP_K: int = int(os.getenv("RERANK_TOP_K", "3"))
     CHUNK_SIZE: int = int(os.getenv("CHUNK_SIZE", "500"))
