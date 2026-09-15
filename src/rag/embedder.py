@@ -1,9 +1,10 @@
 """
 嵌入模型模块
-封装BGE中文嵌入模型
+使用 SiliconFlow 云端 BGE 中文嵌入模型（兼容 OpenAI 接口）
+避免本地部署 sentence-transformers / torch
 """
 
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_openai import OpenAIEmbeddings
 from config.settings import settings
 from src.utils.logger import log
 
@@ -23,18 +24,19 @@ class Embedder:
     def __init__(self):
         """初始化嵌入模型"""
         if self._embeddings is None:
-            log.info(f"正在加载嵌入模型: {settings.EMBEDDING_MODEL}")
+            log.info(f"正在初始化云端嵌入模型: {settings.SILICONFLOW_EMBEDDING_MODEL}")
             
-            self._embeddings = HuggingFaceEmbeddings(
-                model_name=settings.EMBEDDING_MODEL,
-                model_kwargs={"device": "cpu"},
-                encode_kwargs={
-                    "normalize_embeddings": True,  # 归一化，便于余弦相似度
-                    "batch_size": 32
-                }
+            self._embeddings = OpenAIEmbeddings(
+                model=settings.SILICONFLOW_EMBEDDING_MODEL,
+                base_url=settings.MODEL_BASE_URL,
+                api_key=settings.SILICONFLOW_API_KEY,
+                # 跳过 tiktoken 长度检查：中文及非 OpenAI 模型会误判 token 数
+                check_embedding_ctx_length=False,
+                # 分批调用，避免 SiliconFlow 单次请求 input 数组超限
+                chunk_size=16,
             )
             
-            log.info("嵌入模型加载完成")
+            log.info("云端嵌入模型初始化完成")
     
     @property
     def embeddings(self):

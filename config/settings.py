@@ -26,6 +26,12 @@ class Settings:
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
 
     # ===== RAG（可选，后续课程会用到）=====
+    # 知识库文档目录（build_knowledge_base.py 等脚本会用到）
+    KNOWLEDGE_BASE_DIR: str = os.getenv("KNOWLEDGE_BASE_DIR", "./data/knowledge")
+
+    # 云端向量模型（SiliconFlow，兼容 OpenAI 接口）
+    SILICONFLOW_EMBEDDING_MODEL: str = os.getenv("SILICONFLOW_EMBEDDING_MODEL", "BAAI/bge-large-zh-v1.5")
+
     EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "BAAI/bge-small-zh-v1.5")
     RERANKER_MODEL: str = os.getenv("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
     RETRIEVE_TOP_K: int = int(os.getenv("RETRIEVE_TOP_K", "10"))
