@@ -28,5 +28,7 @@ def create_model(
         api_key=settings.SILICONFLOW_API_KEY,
         base_url=settings.MODEL_BASE_URL,
         temperature=temperature,
-        max_tokens=max_tokens
+        max_tokens=max_tokens,
+        timeout=120,    # 单次请求超时（秒），避免网络抖动时无限等待
+        max_retries=2,  # 失败自动重试
     )

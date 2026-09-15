@@ -3,6 +3,8 @@
 智能客服系统的核心，负责协调所有子Agent和工具
 """
 
+import time
+
 from deepagents import create_deep_agent
 from config.prompts import MAIN_AGENT_PROMPT, PRODUCT_AGENT_PROMPT
 from src.utils.model import create_model
@@ -76,14 +78,16 @@ class CustomerServiceAgent:
             AI回复
         """
         log.info(f"[用户 {user_id}]: {user_message}")
-        
-        # 调用Agent
+
+        # 调用Agent（含子Agent派发与RAG检索，可能需要数十秒）
+        start = time.time()
         result = self.agent.invoke({
             "messages": [
                 {"role": "user", "content": user_message}
             ]
         })
-        
+        log.info(f"[Agent调用完成] 耗时 {time.time() - start:.1f}s")
+
         # 提取回复
         reply = result["messages"][-1].content
         
