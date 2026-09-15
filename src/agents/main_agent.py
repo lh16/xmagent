@@ -4,18 +4,30 @@
 """
 
 from deepagents import create_deep_agent
-from config.prompts import MAIN_AGENT_PROMPT
+from config.prompts import MAIN_AGENT_PROMPT, PRODUCT_AGENT_PROMPT
 from src.utils.model import create_model
+from src.tools.rag_tools import RAGTool
+from src.agents.product_agent import ProductConsultantAgent
 from src.utils.logger import log
 
 
 class CustomerServiceAgent:
     """智能客服主控Agent"""
     
-    def __init__(self):
-        """初始化Agent"""
+    def __init__(self, rag_tool: RAGTool = None):
+        """
+        初始化Agent
+        
+        Args:
+            rag_tool: RAG检索工具，传入后启用产品咨询子Agent
+        """
         # 创建模型
         self.model = create_model(temperature=0.7)
+        
+        # 产品咨询子Agent（未提供rag_tool时不启用）
+        self.product_agent = ProductConsultantAgent(rag_tool) if rag_tool else None
+        if self.product_agent is None:
+            log.warning("未提供RAG工具，产品咨询子Agent未启用")
         
         # 创建Deep Agent
         self.agent = self._create_agent()
@@ -26,17 +38,30 @@ class CustomerServiceAgent:
         """
         创建Deep Agent实例
         
-        当前版本：仅支持基础对话
+        已接入：
+        - 产品咨询子Agent（需提供rag_tool）
+        
         后续课程将逐步添加：
-        - RAG工具
         - 订单查询工具
-        - 子Agent
         - 记忆系统
         """
+        subagents = []
+        if self.product_agent:
+            subagents.append({
+                "name": "product-consultant",
+                "description": (
+                    "产品咨询专家，回答商品规格、功能、价格、库存、型号对比等问题。"
+                    "当用户询问具体商品信息时，把任务派发给它。"
+                ),
+                "system_prompt": PRODUCT_AGENT_PROMPT,
+                "tools": self.product_agent.tools,
+            })
+        
         return create_deep_agent(
             model=self.model,
             system_prompt=MAIN_AGENT_PROMPT,
-            tools=[],  # 当前版本暂无工具
+            tools=[],  # 主控自身不直接持有工具，具体能力交由子Agent
+            subagents=subagents or None,
         )
     
     def chat(self, user_message: str, user_id: str = "test_user") -> str:
@@ -84,8 +109,23 @@ class CustomerServiceAgent:
 # 测试代码
 # ============================================================
 if __name__ == "__main__":
+    from config.settings import settings
+    from src.rag.loader import DocumentLoader
+    from src.rag.splitter import DocumentSplitter
+    from src.rag.vectorstore import VectorStore
+    
+    # 构造RAG工具以启用产品咨询子Agent
+    documents = DocumentLoader.load_directory(settings.KNOWLEDGE_BASE_DIR)
+    chunks = DocumentSplitter().split(documents)
+    store = VectorStore(collection_name="product_knowledge").load()
+    
+    if store._collection.count() == 0:
+        raise SystemExit("向量库为空，请先运行: uv run python -m scripts.build_knowledge_base")
+    
     # 创建Agent
-    agent = CustomerServiceAgent()
+    agent = CustomerServiceAgent(
+        rag_tool=RAGTool(vector_store=store, chunks=chunks)
+    )
     
     # 测试基础对话
     print("=" * 60)
