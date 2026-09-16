@@ -52,7 +52,7 @@ class OrderQueryAgent:
             system_prompt=ORDER_AGENT_PROMPT,
         )
     
-    def _with_order_context(self, messages: list) -> list:
+    def _prepare_messages(self, messages: list) -> tuple:
         """
         若最后一条用户消息含订单号，先取真实订单数据作为上下文注入。
 
@@ -63,36 +63,49 @@ class OrderQueryAgent:
             messages: 原始消息列表
 
         Returns:
-            注入上下文后的消息列表
+            (messages, direct_reply)：预取到数据时注入上下文并返回
+            (messages, None)；查无此单或查询失败时返回 (messages, 工具原文)，
+            由调用方直接短路回复，不再经过LLM
         """
         prepared = list(messages)
+        direct_reply = None
 
-        if not prepared or prepared[-1].get("role") != "user":
-            return prepared
+        if prepared and prepared[-1].get("role") == "user":
+            match = ORDER_ID_PATTERN.search(prepared[-1].get("content", ""))
+            if match:
+                order_id = match.group()
+                data = query_order(order_id)
 
-        match = ORDER_ID_PATTERN.search(prepared[-1].get("content", ""))
-        if not match:
-            return prepared
+                if data.startswith("📦 订单信息"):
+                    log.info(f"[订单查询] 预取订单 {order_id} 并注入上下文")
+                    prepared.insert(len(prepared) - 1, {
+                        "role": "system",
+                        "content": ORDER_CONTEXT_TEMPLATE.format(
+                            order_id=order_id, data=data
+                        ),
+                    })
+                else:
+                    # 查无此单/查询失败：直接回复工具原文，不经过LLM。
+                    # 多轮时历史里可能有其他订单的真实数据，LLM会张冠李戴，
+                    # 给不存在的订单编出"已完成、金额xxx"这类假信息（实测复现）
+                    log.info(f"[订单查询] 订单 {order_id} 未取到数据，直接回复工具结果")
+                    direct_reply = data
 
-        order_id = match.group()
-        data = query_order(order_id)
-        log.info(f"[订单查询] 预取订单 {order_id} 并注入上下文")
-
-        prepared.insert(len(prepared) - 1, {
-            "role": "system",
-            "content": ORDER_CONTEXT_TEMPLATE.format(order_id=order_id, data=data),
-        })
-        return prepared
+        return prepared, direct_reply
 
     def chat(self, user_message: str) -> str:
         """处理订单查询"""
         log.info(f"[订单查询] 用户问题: {user_message}")
-        
-        result = self.agent.invoke({
-            "messages": self._with_order_context(
-                [{"role": "user", "content": user_message}]
-            )
-        })
+
+        messages, direct_reply = self._prepare_messages(
+            [{"role": "user", "content": user_message}]
+        )
+
+        if direct_reply is not None:
+            log.info(f"[订单查询] 回答: {direct_reply[:100]}...")
+            return direct_reply
+
+        result = self.agent.invoke({"messages": messages})
         
         reply = result["messages"][-1].content
         log.info(f"[订单查询] 回答: {reply[:100]}...")
@@ -111,7 +124,13 @@ class OrderQueryAgent:
         """
         log.info(f"[订单查询] 多轮对话，历史消息数: {len(messages)}")
 
-        result = self.agent.invoke({"messages": self._with_order_context(messages)})
+        messages, direct_reply = self._prepare_messages(messages)
+
+        if direct_reply is not None:
+            log.info(f"[订单查询] 回答: {direct_reply[:100]}...")
+            return direct_reply
+
+        result = self.agent.invoke({"messages": messages})
         reply = result["messages"][-1].content
 
         log.info(f"[订单查询] 回答: {reply[:100]}...")
