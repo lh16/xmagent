@@ -14,6 +14,7 @@ from config.prompts import MAIN_AGENT_PROMPT
 from src.utils.model import create_model
 from src.agents.intent import intent_classifier, Intent
 from src.agents.after_sales_agent import AfterSalesAgent
+from src.agents.handoff import HandoffManager
 from src.agents.order_agent import OrderQueryAgent
 from src.agents.product_agent import ProductConsultantAgent
 from src.memory.memory_manager import MemoryManager
@@ -26,6 +27,12 @@ ORDER_ID_PATTERN = re.compile(r"\d{5,}")
 
 # query_order 取到数据时的开头，用于判定订单是否真实存在
 ORDER_DATA_PREFIX = "📦 订单信息"
+
+# 售后诉求关键词。带订单号时出现这些词，用户真正要问的是能否退换/保修，
+# 订单号只是定位手段；但意图分类会优先判成订单查询，需在订单分支拦截后交接售后。
+AFTER_SALES_KEYWORDS = (
+    "退货", "退款", "换货", "维修", "保修", "坏了", "质量问题", "退掉", "退换",
+)
 
 
 class CustomerServiceAgent:
@@ -80,6 +87,10 @@ class CustomerServiceAgent:
         if Intent.ORDER_QUERY not in self.subagents:
             self.subagents[Intent.ORDER_QUERY] = OrderQueryAgent()
         self.order_agent = self.subagents[Intent.ORDER_QUERY]
+        
+        # 交接管理器：跨子Agent转交任务（如售后问题需先查订单）。
+        # 放在子Agent装配完成之后，持有的是最终路由表。
+        self.handoff_manager = HandoffManager(subagents=self.subagents)
         
         # 闲聊兜底Agent：未接入对应子Agent的意图也交给它
         self.chitchat_agent = self._create_chitchat_agent()
@@ -304,6 +315,18 @@ class CustomerServiceAgent:
         self, message: str, history: list = None, memory_context: str = ""
     ) -> str:
         """处理订单查询"""
+        # 订单号 + 售后诉求：订单Agent只会回物流信息，答不了能否退换，
+        # 因此查到订单后交接给售后，由售后结合订单状态作答
+        order_id = ORDER_ID_PATTERN.search(message)
+        if (
+            order_id
+            and Intent.AFTER_SALES in self.subagents
+            and any(keyword in message for keyword in AFTER_SALES_KEYWORDS)
+        ):
+            return self._handoff_after_sales_with_order(
+                message, memory_context, order_id.group()
+            )
+        
         reply = self._call_subagent(
             Intent.ORDER_QUERY, message, history, memory_context
         )
@@ -325,12 +348,47 @@ class CustomerServiceAgent:
     def _handle_after_sales(
         self, message: str, history: list = None, memory_context: str = ""
     ) -> str:
-        """处理售后政策（未装配售后子Agent时交由主控兜底）"""
+        """
+        处理售后政策（未装配售后子Agent时交由主控兜底）
+        
+        带订单号的售后问题（如"订单12345能退货吗"）要先知道订单状态，
+        才能判断是否超期、走退货还是换货，所以先查订单再交接给售后。
+        """
+        if Intent.AFTER_SALES not in self.subagents:
+            return self._handle_chitchat(message, history, memory_context)
+        
+        order_id = ORDER_ID_PATTERN.search(message)
+        if order_id and Intent.ORDER_QUERY in self.subagents:
+            return self._handoff_after_sales_with_order(
+                message, memory_context, order_id.group()
+            )
+        
         reply = self._call_subagent(
             Intent.AFTER_SALES, message, history, memory_context
         )
         return reply if reply is not None else self._handle_chitchat(
             message, history, memory_context
+        )
+    
+    def _handoff_after_sales_with_order(
+        self, message: str, memory_context: str, order_id: str
+    ) -> str:
+        """先由订单Agent查单，再把订单信息作为上下文交接给售后Agent"""
+        log.info(f"[任务交接] 售后问题涉及订单 {order_id}，先查订单")
+        
+        order_reply = self.order_agent.chat(f"请查询订单 {order_id} 的信息")
+        
+        # 订单信息与记忆一并交给 handoff 作为上下文：
+        # 它会以独立 system 消息注入，拼进用户消息会污染订单号提取
+        context = f"订单信息：{order_reply}"
+        if memory_context:
+            context = f"{context}\n\n{memory_context}"
+        
+        return self.handoff_manager.handoff(
+            from_agent="主控Agent",
+            to_intent=Intent.AFTER_SALES,
+            message=message,
+            context=context,
         )
     
     def _handle_transfer_human(
