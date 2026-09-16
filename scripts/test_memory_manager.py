@@ -42,8 +42,9 @@ def main():
         print("\n" + "─" * 60)
         print("[1] 模拟对话并提取记忆")
 
-        # 预算正则要求「我预算」，写成「，预算3000」则匹配不到
-        conversation = "你好，我叫小明，我想买个手机，我预算3000左右"
+        # 预算提取不要求主语：既匹配「我预算3000」，也匹配「，预算3000左右」。
+        # 这里故意不带「我」，正则一旦退回要求主语，本用例会立刻失败
+        conversation = "你好，我叫小明，我想买个手机，预算3000左右"
         memory.add_user_message(conversation, user_id=user_id)
         memory.extract_and_remember(user_id, conversation)
 
