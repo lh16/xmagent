@@ -15,8 +15,13 @@ from src.agents.intent import Intent
 from config.settings import settings
 
 
-def build_system():
-    """构建智能客服系统"""
+def build_system(session_id: str = "default"):
+    """
+    构建智能客服系统
+
+    Args:
+        session_id: 会话ID，短期记忆按会话隔离
+    """
     print("正在初始化智能客服系统...")
     
     # 1. 准备RAG工具（产品知识库）
@@ -53,7 +58,8 @@ def build_system():
         subagents={
             Intent.PRODUCT_INQUIRY: product_agent,
             Intent.ORDER_QUERY: order_agent,
-        }
+        },
+        session_id=session_id,
     )
     
     print("✓ 系统初始化完成！\n")
