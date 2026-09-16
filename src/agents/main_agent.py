@@ -29,19 +29,23 @@ class CustomerServiceAgent:
         """
         self.model = create_model(temperature=0.7)
         
-        # 路由表：意图 → 子Agent
+        # 路由表：意图 → 子Agent（外部注入优先，未注入的按可用依赖自动装配）
         self.subagents: Dict[Intent, Any] = dict(subagents or {})
         
-        # 产品咨询子Agent（未提供rag_tool时不启用）
-        self.product_agent = ProductConsultantAgent(rag_tool) if rag_tool else None
-        if self.product_agent:
-            self.subagents.setdefault(Intent.PRODUCT_INQUIRY, self.product_agent)
+        # 产品咨询子Agent：注入优先，否则需要rag_tool才能装配
+        if Intent.PRODUCT_INQUIRY in self.subagents:
+            self.product_agent = self.subagents[Intent.PRODUCT_INQUIRY]
         else:
-            log.warning("未提供RAG工具，产品咨询子Agent未启用")
+            self.product_agent = ProductConsultantAgent(rag_tool) if rag_tool else None
+            if self.product_agent:
+                self.subagents[Intent.PRODUCT_INQUIRY] = self.product_agent
+            else:
+                log.warning("未提供RAG工具且未注入子Agent，产品咨询能力未启用")
         
-        # 订单查询子Agent（无外部依赖，默认启用）
-        self.order_agent = OrderQueryAgent()
-        self.subagents.setdefault(Intent.ORDER_QUERY, self.order_agent)
+        # 订单查询子Agent：无外部依赖，未注入时自动装配
+        if Intent.ORDER_QUERY not in self.subagents:
+            self.subagents[Intent.ORDER_QUERY] = OrderQueryAgent()
+        self.order_agent = self.subagents[Intent.ORDER_QUERY]
         
         # 闲聊兜底Agent：未接入对应子Agent的意图也交给它
         self.chitchat_agent = self._create_chitchat_agent()
