@@ -3,6 +3,7 @@
 智能客服系统的核心，负责协调所有子Agent和工具
 """
 
+import re
 import time
 from typing import Any, Dict, Optional
 
@@ -12,22 +13,40 @@ from src.utils.model import create_model
 from src.agents.intent import intent_classifier, Intent
 from src.agents.order_agent import OrderQueryAgent
 from src.agents.product_agent import ProductConsultantAgent
+from src.memory.memory_manager import MemoryManager
+from src.tools.order_tools import query_order
 from src.tools.rag_tools import RAGTool
 from src.utils.logger import log
+
+# 订单号特征：5 位以上连续数字，与订单查询子Agent的判定保持一致
+ORDER_ID_PATTERN = re.compile(r"\d{5,}")
+
+# query_order 取到数据时的开头，用于判定订单是否真实存在
+ORDER_DATA_PREFIX = "📦 订单信息"
 
 
 class CustomerServiceAgent:
     """智能客服主控Agent（带意图路由）"""
     
-    def __init__(self, rag_tool: RAGTool = None, subagents: Dict = None):
+    def __init__(
+        self,
+        rag_tool: RAGTool = None,
+        subagents: Dict = None,
+        session_id: str = "default",
+        memory: MemoryManager = None,
+    ):
         """
         初始化Agent
         
         Args:
             rag_tool: RAG检索工具，传入后启用产品咨询子Agent
             subagents: 外部注入的子Agent {Intent: agent}，优先级高于自动装配
+            session_id: 会话ID，短期记忆按会话隔离
+            memory: 记忆管理器，注入后便于测试使用临时库，默认按会话新建
         """
         self.model = create_model(temperature=0.7)
+        self.session_id = session_id
+        self.memory = memory or MemoryManager(session_id=session_id)
         
         # 路由表：意图 → 子Agent（外部注入优先，未注入的按可用依赖自动装配）
         self.subagents: Dict[Intent, Any] = dict(subagents or {})
@@ -76,15 +95,29 @@ class CustomerServiceAgent:
         """
         log.info(f"[用户 {user_id}]: {user_message}")
         
+        # 记录本轮消息，并从中提取可长期保存的信息（姓名、偏好等）
+        self.memory.add_user_message(user_message, user_id=user_id)
+        self.memory.extract_and_remember(user_id, user_message)
+        
         start = time.time()
         intent = self._classify(user_message)
-        reply = self._dispatch(intent, user_message)
+        memory_context = self._build_memory_context(user_id)
+        reply = self._dispatch(intent, user_message, memory_context=memory_context)
         log.info(f"[Agent调用完成] 耗时 {time.time() - start:.1f}s")
+        
+        # 订单只在确实查到时才记忆，避免把查无此单的单号写进长期记忆
+        if intent == Intent.ORDER_QUERY:
+            self._remember_order_if_exists(user_id, user_message)
+        
+        self.memory.add_assistant_message(reply)
+        self.memory.save_interaction(
+            user_id, user_message, intent.value, reply[:200]
+        )
         
         log.info(f"[AI]: {reply[:100]}...")
         return reply
     
-    def chat_with_history(self, messages: list) -> str:
+    def chat_with_history(self, messages: list, user_id: str = "test_user") -> str:
         """
         带历史记录的多轮对话
         
@@ -93,6 +126,7 @@ class CustomerServiceAgent:
         
         Args:
             messages: 消息列表 [{"role": "user", "content": "..."}, ...]
+            user_id: 用户ID
         
         Returns:
             AI回复
@@ -106,8 +140,75 @@ class CustomerServiceAgent:
             "",
         )
         
+        self.memory.add_user_message(last_user_message, user_id=user_id)
+        self.memory.extract_and_remember(user_id, last_user_message)
+
         intent = self._classify(last_user_message)
-        return self._dispatch(intent, last_user_message, messages)
+        memory_context = self._build_memory_context(user_id)
+        reply = self._dispatch(
+            intent, last_user_message, messages, memory_context=memory_context
+        )
+
+        # 订单只在确实查到时才记忆，避免把查无此单的单号写进长期记忆
+        if intent == Intent.ORDER_QUERY:
+            self._remember_order_if_exists(user_id, last_user_message)
+
+        self.memory.add_assistant_message(reply)
+        self.memory.save_interaction(
+            user_id, last_user_message, intent.value, reply[:200]
+        )
+        return reply
+    
+    def _build_memory_context(self, user_id: str) -> str:
+        """取长期记忆上下文，无记忆时为空字符串"""
+        return self.memory.build_context(user_id)
+    
+    @staticmethod
+    def _with_memory(message: str, memory_context: str) -> str:
+        """单轮：把记忆上下文附到用户问题前"""
+        if not memory_context:
+            return message
+        
+        return f"{memory_context}\n\n用户问题：{message}"
+    
+    @staticmethod
+    def _inject_memory(messages: list, memory_context: str) -> list:
+        """
+        把记忆作为独立 system 消息插到最后一条用户消息之前
+        
+        不能拼进用户消息：订单查询子Agent从最后一条用户消息里正则提取订单号，
+        记忆中的历史订单号会被优先匹配到，导致查成另一笔订单。
+        多轮子Agent只接收 history，因此记忆必须注入 history，否则带了历史就丢记忆。
+        返回新列表，不修改原列表。
+        """
+        if not memory_context or not messages:
+            return messages
+        
+        injected = list(messages)
+        for index in range(len(injected) - 1, -1, -1):
+            if injected[index].get("role") == "user":
+                injected.insert(index, {
+                    "role": "system",
+                    "content": f"以下是该用户的历史记忆，仅供参考：\n{memory_context}",
+                })
+                break
+        
+        return injected
+    
+    def _remember_order_if_exists(self, user_id: str, message: str):
+        """
+        订单确实存在时才记住
+        
+        不做文本盲提：查无此单的单号被写进长期记忆后，后续模型会据此
+        认定该订单存在，把不存在的订单编出完整信息。
+        """
+        match = ORDER_ID_PATTERN.search(message)
+        if not match:
+            return
+        
+        order_id = match.group()
+        if query_order(order_id).startswith(ORDER_DATA_PREFIX):
+            self.memory.remember_order(user_id, order_id)
     
     def _classify(self, message: str) -> Intent:
         """识别意图，并记录判定方式与置信度"""
@@ -120,21 +221,31 @@ class CustomerServiceAgent:
         
         return result["intent"]
     
-    def _dispatch(self, intent: Intent, message: str, history: list = None) -> str:
-        """按意图分派到对应的处理器"""
+    def _dispatch(
+        self,
+        intent: Intent,
+        message: str,
+        history: list = None,
+        memory_context: str = "",
+    ) -> str:
+        """按意图分派到对应的处理器，并把记忆上下文一并传给处理器"""
         if intent == Intent.ORDER_QUERY:
-            return self._handle_order_query(message, history)
+            return self._handle_order_query(message, history, memory_context)
         elif intent == Intent.PRODUCT_INQUIRY:
-            return self._handle_product_inquiry(message, history)
+            return self._handle_product_inquiry(message, history, memory_context)
         elif intent == Intent.AFTER_SALES:
-            return self._handle_after_sales(message, history)
+            return self._handle_after_sales(message, history, memory_context)
         elif intent == Intent.TRANSFER_HUMAN:
-            return self._handle_transfer_human()
+            return self._handle_transfer_human(memory_context=memory_context)
         else:
-            return self._handle_chitchat(message, history)
+            return self._handle_chitchat(message, history, memory_context)
     
     def _call_subagent(
-        self, intent: Intent, message: str, history: list = None
+        self,
+        intent: Intent,
+        message: str,
+        history: list = None,
+        memory_context: str = "",
     ) -> Optional[str]:
         """
         调用意图对应的子Agent
@@ -145,6 +256,7 @@ class CustomerServiceAgent:
             intent: 意图
             message: 当前用户消息
             history: 完整历史消息，传入且子Agent支持时优先走多轮
+            memory_context: 长期记忆上下文，非空时附到用户消息前
         
         Returns:
             子Agent回复，未接入时返回 None
@@ -154,27 +266,55 @@ class CustomerServiceAgent:
             log.warning(f"[路由] {intent.value} 没有对应的子Agent，交由主控处理")
             return None
         
+        # 有记忆时统一走多轮接口：记忆要以独立 system 消息注入，
+        # 拼进用户消息会让订单子Agent提取到错误的订单号（实测复现）
+        if memory_context and hasattr(agent, "chat_with_history"):
+            messages = history or [{"role": "user", "content": message}]
+            return agent.chat_with_history(
+                self._inject_memory(messages, memory_context)
+            )
+        
         if history and hasattr(agent, "chat_with_history"):
             return agent.chat_with_history(history)
         
-        return agent.chat(message)
+        return agent.chat(self._with_memory(message, memory_context))
     
-    def _handle_order_query(self, message: str, history: list = None) -> str:
+    def _handle_order_query(
+        self, message: str, history: list = None, memory_context: str = ""
+    ) -> str:
         """处理订单查询"""
-        reply = self._call_subagent(Intent.ORDER_QUERY, message, history)
-        return reply if reply is not None else self._handle_chitchat(message, history)
+        reply = self._call_subagent(
+            Intent.ORDER_QUERY, message, history, memory_context
+        )
+        return reply if reply is not None else self._handle_chitchat(
+            message, history, memory_context
+        )
     
-    def _handle_product_inquiry(self, message: str, history: list = None) -> str:
+    def _handle_product_inquiry(
+        self, message: str, history: list = None, memory_context: str = ""
+    ) -> str:
         """处理产品咨询"""
-        reply = self._call_subagent(Intent.PRODUCT_INQUIRY, message, history)
-        return reply if reply is not None else self._handle_chitchat(message, history)
+        reply = self._call_subagent(
+            Intent.PRODUCT_INQUIRY, message, history, memory_context
+        )
+        return reply if reply is not None else self._handle_chitchat(
+            message, history, memory_context
+        )
     
-    def _handle_after_sales(self, message: str, history: list = None) -> str:
+    def _handle_after_sales(
+        self, message: str, history: list = None, memory_context: str = ""
+    ) -> str:
         """处理售后政策（暂无专属子Agent，交由主控按其自身能力回答）"""
-        reply = self._call_subagent(Intent.AFTER_SALES, message, history)
-        return reply if reply is not None else self._handle_chitchat(message, history)
+        reply = self._call_subagent(
+            Intent.AFTER_SALES, message, history, memory_context
+        )
+        return reply if reply is not None else self._handle_chitchat(
+            message, history, memory_context
+        )
     
-    def _handle_transfer_human(self, message: str = "", history: list = None) -> str:
+    def _handle_transfer_human(
+        self, message: str = "", history: list = None, memory_context: str = ""
+    ) -> str:
         """处理转人工"""
         return (
             "非常抱歉给您带来不便！我已经为您记录问题，"
@@ -183,12 +323,21 @@ class CustomerServiceAgent:
             "您也可以拨打客服热线：400-XXX-XXXX"
         )
     
-    def _handle_chitchat(self, message: str, history: list = None) -> str:
+    def _handle_chitchat(
+        self, message: str, history: list = None, memory_context: str = ""
+    ) -> str:
         """处理闲聊"""
         messages = history if history else [{"role": "user", "content": message}]
+        messages = self._inject_memory(messages, memory_context)
         
         result = self.chitchat_agent.invoke({"messages": messages})
         return result["messages"][-1].content
+    
+    def new_session(self, session_id: str):
+        """切换新会话：短期记忆随会话重建，长期记忆不受影响"""
+        self.session_id = session_id
+        self.memory = MemoryManager(session_id=session_id)
+        log.info(f"切换到新会话: {session_id}")
 
 
 # ============================================================
