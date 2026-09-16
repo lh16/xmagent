@@ -45,6 +45,8 @@ class Settings:
     # ===== 存储 =====
     CHROMA_PERSIST_DIR: str = os.getenv("CHROMA_PERSIST_DIR", "./data/chroma_db")
     SQLITE_DB_PATH: str = os.getenv("SQLITE_DB_PATH", "./data/orders.db")
+    # 长期记忆（用户画像、历史订单、用户事实、交互记录）
+    LONG_TERM_DB_PATH: str = os.getenv("LONG_TERM_DB_PATH", "./data/long_term_memory.db")
 
     # ===== 会话 =====
     MAX_HISTORY_TURNS: int = int(os.getenv("MAX_HISTORY_TURNS", "10"))
