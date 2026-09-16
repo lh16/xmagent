@@ -5,6 +5,7 @@
 
 from typing import List, Optional
 from langchain_core.documents import Document
+import chromadb
 from langchain_chroma import Chroma
 from config.settings import settings
 from src.rag.embedder import embedder
@@ -31,16 +32,24 @@ class VectorStore:
         
         self.store = None
     
-    def build(self, chunks: List[Document]) -> Chroma:
+    def build(self, chunks: List[Document], rebuild: bool = True) -> Chroma:
         """
         从文档块构建向量存储
-        
+
         Args:
             chunks: 文档块列表
-        
+            rebuild: 是否先删除同名集合再构建。默认 True，保证重复运行不会产生
+                重复向量；需要往已有集合追加时才传 False
+
         Returns:
             Chroma实例
         """
+        # Chroma.from_documents 对已存在的集合是追加语义（每次生成新的 id），
+        # 直接重复构建会让向量成倍增长（实测 3 → 6）：重复块挤占 top_k，
+        # 召回到的不同内容变少。所以默认走"先删后建"，让构建结果可重复。
+        if rebuild:
+            self.delete_collection()
+
         log.info(f"正在构建向量存储，共 {len(chunks)} 个文本块...")
         
         self.store = Chroma.from_documents(
@@ -52,6 +61,27 @@ class VectorStore:
         
         log.info(f"向量存储构建完成，持久化目录: {self.persist_dir}")
         return self.store
+    
+    def delete_collection(self) -> bool:
+        """
+        删除当前集合（重建时调用，避免追加导致向量重复）
+        
+        Returns:
+            是否实际删除了集合；集合本就不存在时返回 False
+        """
+        client = chromadb.PersistentClient(path=self.persist_dir)
+        
+        try:
+            client.delete_collection(self.collection_name)
+        except Exception as e:
+            # 首次构建时集合不存在，属于正常情况，按未删除处理
+            log.info(f"集合 {self.collection_name} 不存在，无需删除: {e}")
+            return False
+        
+        # 断开可能持有的旧引用，避免指向已删除的集合
+        self.store = None
+        log.info(f"已删除旧集合: {self.collection_name}")
+        return True
     
     def load(self) -> Chroma:
         """
