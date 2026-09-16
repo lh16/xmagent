@@ -76,7 +76,8 @@ class LongTermMemory:
 
         Args:
             db_path: SQLite 文件路径，默认取 settings.LONG_TERM_DB_PATH。
-                传 ":memory:" 可建内存库，测试场景下用临时目录避免污染真实数据
+                测试请用临时目录建库，不要用 ":memory:"：
+                每次操作都会新建连接，而内存库每次连接都是新的空库，写入会立即丢失
         """
         self.db_path = db_path or settings.LONG_TERM_DB_PATH
 
