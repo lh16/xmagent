@@ -5,12 +5,15 @@
 
 import re
 import time
+import uuid
+from datetime import datetime
 from typing import Any, Dict, Optional
 
 from deepagents import create_deep_agent
 from config.prompts import MAIN_AGENT_PROMPT
 from src.utils.model import create_model
 from src.agents.intent import intent_classifier, Intent
+from src.agents.after_sales_agent import AfterSalesAgent
 from src.agents.order_agent import OrderQueryAgent
 from src.agents.product_agent import ProductConsultantAgent
 from src.memory.memory_manager import MemoryManager
@@ -48,18 +51,30 @@ class CustomerServiceAgent:
         self.session_id = session_id
         self.memory = memory or MemoryManager(session_id=session_id)
         
+        # 转人工队列（模拟）：工单号与用户问题一并留存，便于人工接手时追溯
+        self.transfer_queue: list = []
+        
         # 路由表：意图 → 子Agent（外部注入优先，未注入的按可用依赖自动装配）
         self.subagents: Dict[Intent, Any] = dict(subagents or {})
         
-        # 产品咨询子Agent：注入优先，否则需要rag_tool才能装配
-        if Intent.PRODUCT_INQUIRY in self.subagents:
-            self.product_agent = self.subagents[Intent.PRODUCT_INQUIRY]
-        else:
-            self.product_agent = ProductConsultantAgent(rag_tool) if rag_tool else None
-            if self.product_agent:
-                self.subagents[Intent.PRODUCT_INQUIRY] = self.product_agent
+        # 知识库类子Agent：产品与售后共用同一个RAG工具。
+        # 售后政策文档已并入 product_knowledge，检索时能命中 after_sales.md，
+        # 因此不为售后单独建库，避免两套知识库内容重复打架。
+        for intent, agent_cls in (
+            (Intent.PRODUCT_INQUIRY, ProductConsultantAgent),
+            (Intent.AFTER_SALES, AfterSalesAgent),
+        ):
+            if intent in self.subagents:
+                continue
+            if rag_tool:
+                self.subagents[intent] = agent_cls(rag_tool)
             else:
-                log.warning("未提供RAG工具且未注入子Agent，产品咨询能力未启用")
+                log.warning(
+                    f"未提供RAG工具且未注入子Agent，{intent.value}能力未启用"
+                )
+        
+        self.product_agent = self.subagents.get(Intent.PRODUCT_INQUIRY)
+        self.after_sales_agent = self.subagents.get(Intent.AFTER_SALES)
         
         # 订单查询子Agent：无外部依赖，未注入时自动装配
         if Intent.ORDER_QUERY not in self.subagents:
@@ -102,7 +117,9 @@ class CustomerServiceAgent:
         start = time.time()
         intent = self._classify(user_message)
         memory_context = self._build_memory_context(user_id)
-        reply = self._dispatch(intent, user_message, memory_context=memory_context)
+        reply = self._dispatch(
+            intent, user_message, memory_context=memory_context, user_id=user_id
+        )
         log.info(f"[Agent调用完成] 耗时 {time.time() - start:.1f}s")
         
         # 订单只在确实查到时才记忆，避免把查无此单的单号写进长期记忆
@@ -146,7 +163,8 @@ class CustomerServiceAgent:
         intent = self._classify(last_user_message)
         memory_context = self._build_memory_context(user_id)
         reply = self._dispatch(
-            intent, last_user_message, messages, memory_context=memory_context
+            intent, last_user_message, messages,
+            memory_context=memory_context, user_id=user_id,
         )
 
         # 订单只在确实查到时才记忆，避免把查无此单的单号写进长期记忆
@@ -227,6 +245,7 @@ class CustomerServiceAgent:
         message: str,
         history: list = None,
         memory_context: str = "",
+        user_id: str = "test_user",
     ) -> str:
         """按意图分派到对应的处理器，并把记忆上下文一并传给处理器"""
         if intent == Intent.ORDER_QUERY:
@@ -236,7 +255,9 @@ class CustomerServiceAgent:
         elif intent == Intent.AFTER_SALES:
             return self._handle_after_sales(message, history, memory_context)
         elif intent == Intent.TRANSFER_HUMAN:
-            return self._handle_transfer_human(memory_context=memory_context)
+            return self._handle_transfer_human(
+                message, history, memory_context, user_id
+            )
         else:
             return self._handle_chitchat(message, history, memory_context)
     
@@ -304,7 +325,7 @@ class CustomerServiceAgent:
     def _handle_after_sales(
         self, message: str, history: list = None, memory_context: str = ""
     ) -> str:
-        """处理售后政策（暂无专属子Agent，交由主控按其自身能力回答）"""
+        """处理售后政策（未装配售后子Agent时交由主控兜底）"""
         reply = self._call_subagent(
             Intent.AFTER_SALES, message, history, memory_context
         )
@@ -313,14 +334,30 @@ class CustomerServiceAgent:
         )
     
     def _handle_transfer_human(
-        self, message: str = "", history: list = None, memory_context: str = ""
+        self,
+        message: str = "",
+        history: list = None,
+        memory_context: str = "",
+        user_id: str = "test_user",
     ) -> str:
-        """处理转人工"""
+        """处理转人工：生成工单号并入队，便于人工接手时追溯用户诉求"""
+        transfer_id = uuid.uuid4().hex[:8]
+        
+        self.transfer_queue.append({
+            "transfer_id": transfer_id,
+            "user_id": user_id,
+            "message": message,
+            "timestamp": datetime.now().isoformat(timespec="seconds"),
+        })
+        
+        log.info(f"[转人工] 用户 {user_id} 请求转人工，工单号: {transfer_id}")
+        
         return (
-            "非常抱歉给您带来不便！我已经为您记录问题，"
-            "正在为您转接人工客服，请稍候...\n\n"
-            "人工客服工作时间：9:00-21:00\n"
-            "您也可以拨打客服热线：400-XXX-XXXX"
+            f"非常抱歉给您带来不便！\n\n"
+            f"✅ 已为您创建工单：{transfer_id}\n"
+            f"📞 人工客服将在 1-2 分钟内接入\n\n"
+            f"人工客服工作时间：9:00-21:00\n"
+            f"客服热线：400-XXX-XXXX"
         )
     
     def _handle_chitchat(
@@ -338,6 +375,10 @@ class CustomerServiceAgent:
         self.session_id = session_id
         self.memory = MemoryManager(session_id=session_id)
         log.info(f"切换到新会话: {session_id}")
+    
+    def get_transfer_queue(self) -> list:
+        """获取转人工工单队列"""
+        return self.transfer_queue
 
 
 # ============================================================
