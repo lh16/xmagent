@@ -24,6 +24,15 @@ ORDER_CONTEXT_TEMPLATE = """以下是订单 {order_id} 的真实查询结果（�
 请严格基于以上内容回答用户。若结果显示未找到订单，如实告知并请用户核对订单号，
 不要补充或推测任何订单字段。"""
 
+# 本轮没有订单号、也没有真实数据可注入时的约束。
+# 此时没有任何数据兜底，模型会凭空编一个订单号来"询问确认"：实测记忆里只有姓名，
+# 它回"您上次看的订单可能是12345，是否查询？"，用户一确认就查到不存在的单。
+NO_ORDER_HINT = """当前用户没有提供订单号，上下文里也没有任何订单号。
+
+- 直接请用户提供订单号
+- 禁止输出任何具体订单号，包括"可能是xxxxx""是不是xxxxx"这类猜测
+- 不要从训练数据里联想示例号码"""
+
 
 class OrderQueryAgent:
     """订单查询子Agent"""
@@ -90,6 +99,30 @@ class OrderQueryAgent:
                     # 给不存在的订单编出"已完成、金额xxx"这类假信息（实测复现）
                     log.info(f"[订单查询] 订单 {order_id} 未取到数据，直接回复工具结果")
                     direct_reply = data
+            else:
+                # 本轮没有订单号，无真实数据可注入。提示词里已有"禁止编造"，
+                # 但实测仍会编一个号来问用户确认，因此在代码层补一条硬提醒。
+                #
+                # 上下文里已有订单号时不能注入：那种情况该由提示词里的
+                # "记忆订单号只作候选、据此询问确认"接管，注入禁止类约束会让
+                # 模型连上下文里真实存在的号都不敢提（实测：记忆里有 12345，
+                # 却只回"请提供订单号"，把刚修好的询问确认行为又压掉了）
+                has_known_order = any(
+                    ORDER_ID_PATTERN.search(m.get("content") or "")
+                    for m in prepared[:-1]
+                    if isinstance(m.get("content"), str)
+                )
+                if not has_known_order:
+                    log.info(
+                        "[订单查询] 本轮无订单号且上下文无已知订单，"
+                        "注入禁止编造订单号的约束"
+                    )
+                    prepared.insert(len(prepared) - 1, {
+                        "role": "system",
+                        "content": NO_ORDER_HINT,
+                    })
+                else:
+                    log.info("[订单查询] 上下文已有订单号，交由提示词走询问确认")
 
         return prepared, direct_reply
 
