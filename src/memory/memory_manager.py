@@ -159,7 +159,9 @@ class MemoryManager:
         # 2. 提取偏好（"我喜欢XXX"、"我预算XXX"）
         pref_patterns = [
             (r"我(?:喜欢|偏好)([^\s，。,\.]{2,10})", "preference"),
-            (r"我(?:的)?预算[是为:]?(\d+[-到]?\d*)", "budget"),
+            # 预算前不强制"我/我的"：实测"我想买个手机，预算3000左右"匹配不上
+            # 旧正则（要求"我预算"连续），预算存不下来，后面只能反问用户
+            (r"预算[是为:]?\s*(\d+[-到]?\d*)", "budget"),
         ]
         for pattern, pref_type in pref_patterns:
             matches = re.findall(pattern, conversation)
