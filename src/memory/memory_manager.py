@@ -14,6 +14,10 @@ from src.utils.logger import log
 # 没有这个约束时，"我是来问订单的" 会被提取出姓名"来问订单"
 _NAME_BOUNDARY = r"(?=[，。！？,.\s]|$)"
 
+# 疑问句同样能命中姓名正则："你还记得我叫什么吗？" 会提取出"什么吗"，
+# 把已记住的真实姓名覆盖掉。捕获内容里出现疑问词的一律丢弃。
+_NAME_STOPWORDS = ("什么", "谁", "怎么", "咋", "哪", "啥", "多少", "几")
+
 
 class MemoryManager:
     """统一记忆管理器"""
@@ -143,6 +147,9 @@ class MemoryManager:
             match = re.search(pattern, conversation)
             if match:
                 name = match.group(1)
+                # 疑问句里的"我叫什么吗"同样能命中，不能当成姓名
+                if any(word in name for word in _NAME_STOPWORDS):
+                    continue
                 self.long_term.save_user(user_id, name=name)
                 self.short_term.set_working("user_name", name)
                 # 姓名属个人信息，日志不落具体内容
