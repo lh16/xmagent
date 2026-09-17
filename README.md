@@ -19,7 +19,7 @@
 
 Python 3.12+ · LangChain · Chroma · SQLite · loguru · uv（依赖管理）
 
-模型与嵌入走 SiliconFlow（OpenAI 兼容接口），因此不需要本地显卡。
+模型与嵌入走 SiliconFlow（OpenAI 兼容接口），因此不需要本地显卡。（可自调整为本地）
 
 ## 目录结构
 
@@ -32,7 +32,7 @@ xmagent/
 │   ├── chroma_db/               # Chroma 向量库持久化目录
 │   ├── orders.db                # 订单库，首次运行自动播种 12345~12348
 │   └── long_term_memory.db      # 长期记忆库
-├── examples/                    # deepagents 官方示例，与客服系统无关
+├── examples/                    # deepagents 示例，与客服系统无关
 ├── scripts/                     # 构建脚本与测试脚本
 ├── src/
 │   ├── agents/                  # 主控、三个子 Agent、意图识别、交接管理
@@ -69,8 +69,6 @@ SILICONFLOW_API_KEY=你的密钥
 SILICONFLOW_BASE_URL=https://api.siliconflow.cn/v1
 MODEL_NAME=Qwen/Qwen2.5-7B-Instruct
 ```
-
-> 注意：`.env.example` 里写的是 `OPENAI_API_KEY`，但 `config/settings.py` 实际读的是 `SILICONFLOW_API_KEY`，照抄示例文件会拿不到密钥。
 
 完整可配置项见 [配置说明](#配置说明)。
 
