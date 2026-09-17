@@ -1,19 +1,21 @@
 [project]
 name = "xmagent"
 version = "0.1.0"
-description = "Add your description here"
+description = "基于 LangChain / deepagents 的多 Agent 智能客服系统（学习 demo，订单为本地 mock）"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "chromadb>=0.5.0",
     "deepagents>=0.1.0",
     "docx2txt>=0.9",
-    "fastapi>=0.115.0",
     "httpx>=0.27.0",
     "jieba>=0.42.1",
     "langchain-chroma>=0.2.0",
+    "langchain-classic>=1.0.0",
     "langchain-community>=0.3.0",
+    "langchain-core>=0.3.0",
     "langchain-openai>=0.3.0",
+    "langchain-text-splitters>=0.3.0",
     "loguru>=0.7.0",
     "markdown>=3.5.0",
     "pydantic>=2.0.0",
@@ -21,7 +23,11 @@ dependencies = [
     "python-docx>=1.1.0",
     "python-dotenv>=1.0.0",
     "rank-bm25>=0.2.2",
-    "sqlalchemy>=2.0.0",
+]
+
+# 仅 examples/ 下的 deepagents 官方示例用到，主系统不依赖
+[project.optional-dependencies]
+examples = [
+    "langchain>=1.0.0",
     "tavily-python>=0.8.1",
-    "uvicorn>=0.32.0",
 ]

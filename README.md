@@ -60,6 +60,8 @@ uv sync
 pip install -r requirements.txt
 ```
 
+> `requirements.txt` 与 `pyproject.toml` 的依赖保持一致，二选一即可。`examples/` 用到的 tavily-python、langchain 不在其中，需要时执行 `uv sync --extra examples`。
+
 ### 2. 配置环境变量
 
 复制 `.env.example` 为 `.env`，填入密钥：

@@ -1,30 +1,30 @@
-# Deep Agents核心
-deepagents>=0.1.0
-langchain-openai>=0.3.0
+# 与 pyproject.toml 的 [project.dependencies] 保持一致，请勿单独修改本文件
+# examples/ 的依赖不在其中，需要时用：uv sync --extra examples
 
-# RAG相关
+# Agent
+deepagents>=0.1.0
+
+# LangChain
+langchain-core>=0.3.0
+langchain-classic>=1.0.0
 langchain-community>=0.3.0
+langchain-openai>=0.3.0
+langchain-text-splitters>=0.3.0
+
+# RAG：向量库 + BM25（jieba 分词，缺失会静默退化）
 langchain-chroma>=0.2.0
 chromadb>=0.5.0
-sentence-transformers>=3.0.0
+rank-bm25>=0.2.2
+jieba>=0.42.1
 
 # 文档处理
 pypdf>=4.0.0
 python-docx>=1.1.0
+docx2txt>=0.9
 markdown>=3.5.0
 
-# 向量化和重排序
-FlagEmbedding>=1.2.0
-
-# 工具和API
-fastapi>=0.115.0
-uvicorn>=0.32.0
-httpx>=0.27.0
-
-# 数据库
-sqlalchemy>=2.0.0
-
 # 工具函数
+httpx>=0.27.0
 python-dotenv>=1.0.0
 pydantic>=2.0.0
 loguru>=0.7.0
